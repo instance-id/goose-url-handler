@@ -1,0 +1,13 @@
+#!/bin/bash
+# filepath: ~/.local/share/applications/goose-url-handler.desktop
+
+[Desktop Entry]
+Name=Goose URL Handler
+GenericName=Goose URL Handler
+Comment=Handle goose:// links
+Exec=/usr/local/bin/goose-url-handler %u
+Icon=goose
+Type=Application
+Terminal=false
+MimeType=x-scheme-handler/goose;
+Categories=Network;

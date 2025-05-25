@@ -1,0 +1,111 @@
+#!/bin/bash
+# filepath: /usr/local/bin/goose-url-handler
+
+# Created: 2025-05-23 - instance.id
+# Repo: https://github.com/instance-id/goose-url-handler 
+
+if [ -z "$GOOSE_PATH" ]; then
+    GOOSE_PATH="${HOME}/.local/bin/goose"
+fi
+
+# --| Check if the goose binary exists
+if [ ! -f "$GOOSE_PATH" ]; then
+    echo "Goose binary not found at $GOOSE_PATH"
+    exit 1
+fi
+
+echo "URL received: $1" >> /tmp/goose-handler.log
+url="$1"
+
+# --| Set path to config file
+CONFIG_FILE="$HOME/.config/goose/config.yaml"
+
+# --| Extract parameters from the URL
+if [[ "$url" =~ goose://extension\?(.*) ]]; then
+    query="${BASH_REMATCH[1]}"
+
+    # --| Parse query parameters
+    declare -A params
+    args=()
+    IFS='&' read -ra PAIRS <<< "$query"
+    for pair in "${PAIRS[@]}"; do
+        IFS='=' read -r key value <<< "$pair"
+        value=$(echo "$value" | sed 's/%20/ /g' | sed 's/%3A/:/g' | sed 's/%2F/\//g' | sed 's/%40/@/g')
+
+        # If the parameter is 'arg', append to args array
+        if [[ "$key" == "arg" ]]; then
+            args+=("$value")
+        else
+            params["$key"]="$value"
+        fi
+    done
+
+    # --| Log parsed parameters
+    echo "Parameters:" >> /tmp/goose-handler.log
+    for key in "${!params[@]}"; do
+        echo "  $key: ${params[$key]}" >> /tmp/goose-handler.log
+    done
+    echo "Arguments:" >> /tmp/goose-handler.log
+    for arg in "${args[@]}"; do
+        echo "  - $arg" >> /tmp/goose-handler.log
+    done
+
+    # --| Check if config file exists
+    if [ ! -f "$CONFIG_FILE" ]; then
+        notify-send "Goose" "Config file not found: $CONFIG_FILE"
+        echo "Config file not found: $CONFIG_FILE" >> /tmp/goose-handler.log
+        exit 1
+    fi
+
+    # --| Make a backup of the config file
+    cp "$CONFIG_FILE" "${CONFIG_FILE}.bak"
+
+    # --| Format the args array as a YAML array
+    args_yaml=""
+    if [ ${#args[@]} -gt 0 ]; then
+        args_yaml="    args:"
+        for arg in "${args[@]}"; do
+            args_yaml="$args_yaml\n      - \"$arg\""
+        done
+    fi
+
+    # --| Set timeout if provided, otherwise use default
+    timeout_value="${params[timeout]:-300}"
+
+    # --| Generate extension config
+    EXTENSION_ID="${params[id]}"
+    EXTENSION_CONFIG="  ${EXTENSION_ID}:\n"
+    EXTENSION_CONFIG+="    enabled: true\n"
+    EXTENSION_CONFIG+="    name: \"${params[name]}\"\n"
+    EXTENSION_CONFIG+="    cmd: \"${params[cmd]}\"\n"
+    EXTENSION_CONFIG+="$args_yaml\n"
+    EXTENSION_CONFIG+="    description: \"${params[description]}\"\n"
+    EXTENSION_CONFIG+="    type: stdio\n"
+    EXTENSION_CONFIG+="    timeout: $timeout_value"
+
+    # --| Check if extensions section exists
+    if grep -q "^extensions:" "$CONFIG_FILE"; then
+
+        # Check if this extension already exists
+        if grep -q "^  ${EXTENSION_ID}:" "$CONFIG_FILE"; then
+            # Extension exists, remove it (from the line with the ID to before the next extension or end of file)
+            sed -i "/^  ${EXTENSION_ID}:/,/^  [a-zA-Z]/ {/^  [a-zA-Z]/!d; /^  ${EXTENSION_ID}:/d}" "$CONFIG_FILE"
+
+            # Add the updated extension config
+            sed -i "/^extensions:/a\\${EXTENSION_CONFIG}" "$CONFIG_FILE"
+        else
+            # Add new extension to existing extensions section
+            sed -i "/^extensions:/a\\${EXTENSION_CONFIG}" "$CONFIG_FILE"
+        fi
+    else
+        # Add extensions section with this extension
+        echo -e "\nextensions:\n${EXTENSION_CONFIG}" >> "$CONFIG_FILE"
+    fi
+
+    # --| Show notifications
+    notify-send "Goose" "Extension '${params[name]}' installed successfully"
+    echo "Extension '${params[name]}' installed successfully" >> /tmp/goose-handler.log
+else
+    notify-send "Goose" "Invalid goose:// URL format"
+    echo "Invalid URL format: $url" >> /tmp/goose-handler.log
+fi
